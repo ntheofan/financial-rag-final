@@ -3,9 +3,9 @@ Financial RAG — FinanceBench
 Streamlit application για αλληλεπιδραστική εξερεύνηση του RAG pipeline.
 """
 
-import os
 import re
-import time
+import math
+from collections import Counter
 from pathlib import Path
 
 import numpy as np
@@ -13,43 +13,39 @@ import pandas as pd
 import streamlit as st
 
 # ---------------------------------------------------------------------------
-# Page config (πρέπει να είναι το ΠΡΩΤΟ st call)
+# Ρύθμιση σελίδας (πρέπει να είναι το ΠΡΩΤΟ st call)
 # ---------------------------------------------------------------------------
 st.set_page_config(
-    page_title="Financial RAG — FinanceBench",
+    page_title="Financial RAG",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
 # ---------------------------------------------------------------------------
-# Paths
+# Διαδρομές
 # ---------------------------------------------------------------------------
 BASE_DIR = Path(__file__).parent
 DATA_DIR = BASE_DIR / "data"
-INTERIM_DIR = DATA_DIR / "interim"
 PROCESSED_DIR = DATA_DIR / "processed"
 CHUNKS_DIR = PROCESSED_DIR / "chunks"
 EMBEDDINGS_DIR = PROCESSED_DIR / "embeddings"
-RETRIEVAL_DIR = PROCESSED_DIR / "retrieval_results"
-QA_DIR = PROCESSED_DIR / "qa_results"
 EVAL_DIR = PROCESSED_DIR / "evaluation"
 FIGURES_DIR = BASE_DIR / "notebooks" / "figures"
 
 # ---------------------------------------------------------------------------
-# Constants
+# Σταθερές
 # ---------------------------------------------------------------------------
 DEFAULT_EMBEDDING_MODEL = "BAAI/bge-m3"
 
-# dimension → suggested model (for auto-suggest in sidebar)
+# διάσταση embedding → προτεινόμενο μοντέλο στο sidebar
 DIM_TO_MODEL: dict[int, str] = {
     384:  "BAAI/bge-small-en-v1.5",
     768:  "BAAI/bge-base-en-v1.5",
-    1024: "BAAI/bge-m3",
-    4096: "intfloat/e5-mistral-7b-instruct",
+    1024: "BAAI/bge-m3"
 }
 
-SYSTEM_PROMPT = """You are a financial question answering assistant.
+SYSTEM_PROMPT = """You are a financial analyst.
 
 Answer the question using ONLY the provided context.
 
@@ -63,66 +59,26 @@ Rules:
 - If the question asks whether a metric is not useful or not relevant, explain that only if the context supports it.
 """
 
-FINANCE_ALIAS_MAP = {
-    "ppe": ["property plant equipment", "property plant and equipment", "pp&e", "balance sheet"],
-    "net ppe": ["property plant and equipment net", "net property plant equipment", "balance sheet"],
-    "capex": [
-        "capital expenditure", "capital expenditures",
-        "purchases of property plant and equipment",
-        "cash flow statement",
-    ],
-    "cogs": ["cost of goods sold", "cost of sales", "income statement"],
-    "ebitda": ["earnings before interest taxes depreciation and amortization"],
-    "opex": ["operating expenses", "selling general and administrative", "sg&a"],
-    "gross margin": ["gross profit margin", "gross profit", "income statement"],
-    "operating cash flow": ["net cash provided by operating activities", "cash flow statement"],
-    "free cash flow": ["free cash flow", "net cash provided by operating activities", "capital expenditures"],
-    "working capital": ["current assets", "current liabilities", "balance sheet"],
-    "payout ratio": ["dividends", "net income", "dividend payout ratio"],
-}
-
 PIPELINES = ["dense", "hybrid", "hybrid_reranked"]
 PIPELINE_LABELS = {
     "dense": "Dense (Baseline)",
     "hybrid": "Hybrid (Dense + BM25)",
     "hybrid_reranked": "Hybrid + Reranking",
 }
-PIPELINE_COLORS = {
-    "dense": "#4C72B0",
-    "hybrid": "#55A868",
-    "hybrid_reranked": "#C44E52",
-}
 
 # ---------------------------------------------------------------------------
-# Query expansion helpers
+# Βοηθητικές συναρτήσεις parsing
 # ---------------------------------------------------------------------------
 
-def expand_finance_query(query: str) -> str:
-    q = re.sub(r"\s+", " ", str(query).lower().strip())
-    expansions = []
-    for alias in sorted(FINANCE_ALIAS_MAP, key=len, reverse=True):
-        if alias in q:
-            expansions.extend(FINANCE_ALIAS_MAP[alias])
-    if "balance sheet" in q:
-        expansions.extend(["balance sheet", "assets liabilities equity"])
-    if "cash flow" in q:
-        expansions.extend(["cash flow statement", "operating activities investing activities financing activities"])
-    if "income statement" in q:
-        expansions.extend(["income statement", "net sales operating income net income"])
-    if "year end" in q or "year-end" in q:
-        expansions.extend(["at december 31", "balance sheet"])
-    seen: set = set()
-    unique = []
-    for item in expansions:
-        item = item.strip().lower()
-        if item and item not in seen:
-            seen.add(item)
-            unique.append(item)
-    return q + (" " + " ".join(unique) if unique else "")
 
+TOKEN_PATTERN = re.compile(r"[a-zA-Z0-9&\.]+")
+
+def tokenize_for_bm25(text: str):
+    text = str(text).lower()
+    return TOKEN_PATTERN.findall(text)
 
 # ---------------------------------------------------------------------------
-# Cached data loaders
+# Cached loaders δεδομένων
 # ---------------------------------------------------------------------------
 
 @st.cache_resource(show_spinner="Φόρτωση embedding model…")
@@ -133,7 +89,6 @@ def load_embedding_model(model_name: str):
     except Exception:
         return None
 
-
 @st.cache_data(show_spinner="Φόρτωση chunks…")
 def load_chunks() -> pd.DataFrame | None:
     for path in [CHUNKS_DIR / "financebench_chunks.parquet", CHUNKS_DIR / "financebench_chunks.csv"]:
@@ -141,19 +96,15 @@ def load_chunks() -> pd.DataFrame | None:
             return pd.read_parquet(path) if path.suffix == ".parquet" else pd.read_csv(path)
     return None
 
-
 @st.cache_data(show_spinner="Φόρτωση embeddings…")
 def load_embeddings() -> np.ndarray | None:
     npy = EMBEDDINGS_DIR / "chunk_embeddings.npy"
     return np.load(npy) if npy.exists() else None
 
-
 @st.cache_resource(show_spinner="Φόρτωση / δημιουργία FAISS index…")
 def get_faiss_index(_embeddings: np.ndarray):
-    """Load pre-saved index if available, otherwise build from embeddings."""
     try:
         import faiss  # type: ignore
-
         saved_index = EMBEDDINGS_DIR / "financebench_faiss.index"
         if saved_index.exists():
             index = faiss.read_index(str(saved_index))
@@ -167,41 +118,62 @@ def get_faiss_index(_embeddings: np.ndarray):
     except Exception:
         return None
 
+@st.cache_resource(show_spinner="Φόρτωση / δημιουργία BM25 index…")
+def get_bm25_data(chunks_df: pd.DataFrame):
+    bm25_docs_tokens = [tokenize_for_bm25(text) for text in chunks_df["chunk_text"].tolist()]
+    doc_freq = Counter()
+    doc_lens = []
 
-@st.cache_data(show_spinner=False)
-def load_working_dataset() -> pd.DataFrame | None:
-    for path in [
-        INTERIM_DIR / "financebench_open_source_working.parquet",
-        INTERIM_DIR / "financebench_open_source_working.csv",
-    ]:
-        if path.exists():
-            return pd.read_parquet(path) if path.suffix == ".parquet" else pd.read_csv(path)
-    return None
+    for tokens in bm25_docs_tokens:
+        doc_lens.append(len(tokens))
+        for tok in set(tokens):
+            doc_freq[tok] += 1
 
+    N_DOCS = len(bm25_docs_tokens)
+    AVG_DOC_LEN = sum(doc_lens) / max(N_DOCS, 1)
 
-@st.cache_data(show_spinner=False)
-def load_qa_results(run_name: str) -> pd.DataFrame | None:
-    candidates = [
-        QA_DIR / f"rag_qa_results_{run_name}.parquet",
-        QA_DIR / f"rag_qa_results_{run_name}.csv",
-    ]
-    for path in candidates:
-        if path.exists():
-            return pd.read_parquet(path) if path.suffix == ".parquet" else pd.read_csv(path)
-    return None
+    return bm25_docs_tokens, doc_freq, doc_lens, N_DOCS, AVG_DOC_LEN
 
+def bm25_score_query_app(query_text: str, bm25_data, top_k: int):
+    bm25_docs_tokens, doc_freq, doc_lens, N_DOCS, AVG_DOC_LEN = bm25_data
+    BM25_K1 = 1.5
+    BM25_B = 0.75
 
-@st.cache_data(show_spinner=False)
-def load_retrieval_results(run_name: str) -> pd.DataFrame | None:
-    candidates = [
-        RETRIEVAL_DIR / f"retrieval_results_{run_name}.parquet",
-        RETRIEVAL_DIR / f"retrieval_results_{run_name}.csv",
-    ]
-    for path in candidates:
-        if path.exists():
-            return pd.read_parquet(path) if path.suffix == ".parquet" else pd.read_csv(path)
-    return None
+    query_tokens = tokenize_for_bm25(query_text)
+    if not query_tokens:
+        return []
 
+    scores = np.zeros(N_DOCS, dtype=np.float32)
+    query_token_counts = Counter(query_tokens)
+
+    for token, qtf in query_token_counts.items():
+        df = doc_freq.get(token, 0)
+        if df == 0: continue
+
+        idf = math.log(1 + (N_DOCS - df + 0.5) / (df + 0.5))
+
+        for doc_idx, doc_tokens in enumerate(bm25_docs_tokens):
+            tf = doc_tokens.count(token)
+            if tf == 0: continue
+
+            doc_len = doc_lens[doc_idx]
+            denom = tf + BM25_K1 * (1 - BM25_B + BM25_B * (doc_len / AVG_DOC_LEN))
+            score = idf * ((tf * (BM25_K1 + 1)) / denom)
+            scores[doc_idx] += score
+
+    if np.all(scores == 0):
+        return []
+
+    top_indices = np.argsort(-scores)[:top_k]
+    return [(int(idx), float(scores[idx])) for idx in top_indices if scores[idx] > 0]
+
+@st.cache_resource(show_spinner="Φόρτωση Cross-Encoder (Reranker)…")
+def load_reranker():
+    try:
+        from sentence_transformers import CrossEncoder
+        return CrossEncoder("BAAI/bge-reranker-v2-m3")
+    except Exception:
+        return None
 
 @st.cache_data(show_spinner=False)
 def load_csv_eval(filename: str) -> pd.DataFrame | None:
@@ -214,30 +186,39 @@ def load_csv_eval(filename: str) -> pd.DataFrame | None:
 
 
 # ---------------------------------------------------------------------------
-# Gemini generation
+# Παραγωγή απάντησης με GPT
 # ---------------------------------------------------------------------------
 
-def call_gemini(question: str, context_text: str, api_key: str, model: str) -> str:
+def call_gpt(question: str, context_text: str, api_key: str, model: str) -> str:
     try:
-        os.environ["GEMINI_API_KEY"] = api_key
-        from google import genai  # type: ignore
+        from openai import OpenAI
 
-        client = genai.Client()
+        # Περνάμε το API key μόνο στον τοπικό client, χωρίς αποθήκευση.
+        client = OpenAI(api_key=api_key)
+
         user_prompt = f"Context:\n{context_text}\n\nQuestion:\n{question}"
-        response = client.models.generate_content(
+
+        # Κλήση του OpenAI Chat Completions API.
+        response = client.chat.completions.create(
             model=model,
-            contents=user_prompt,
-            config={"system_instruction": SYSTEM_PROMPT, "temperature": 0.0},
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt}
+            ],
+            temperature=0.0
         )
-        if hasattr(response, "text") and response.text:
-            return response.text.strip()
+
+        # Ασφαλής ανάκτηση του κειμένου απάντησης.
+        if response.choices and response.choices[0].message.content:
+            return response.choices[0].message.content.strip()
+
         return "Insufficient evidence in the retrieved context."
     except Exception as exc:
-        return f"❌ Generation error: {exc}"
+        return f"Generation error: {exc}"
 
 
 # ---------------------------------------------------------------------------
-# Sidebar
+# Πλευρική μπάρα
 # ---------------------------------------------------------------------------
 
 with st.sidebar:
@@ -247,10 +228,10 @@ with st.sidebar:
 
     st.subheader("⚙️ Ρυθμίσεις")
 
-    gemini_api_key: str = st.text_input(
-        "Gemini API Key",
+    gpt_api_key: str = st.text_input(
+        "OpenAI API Key",
         type="password",
-        placeholder="AIzaSy…",
+        placeholder="sk-proj…",
         help="Απαιτείται για live παραγωγή απαντήσεων (Tab: Live Query)",
     )
 
@@ -264,11 +245,11 @@ with st.sidebar:
     top_k: int = st.slider("Top-K Chunks", min_value=1, max_value=10, value=5)
 
     generation_model: str = st.selectbox(
-        "Gemini Model",
-        ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-pro"],
+        "Μοντέλο Παραγωγής (OpenAI)",
+        ["gpt-4o-mini", "gpt-4o", "gpt-3.5-turbo"],
     )
 
-    # Auto-detect embedding dimension from .npy file and suggest model
+    # Αυτόματος εντοπισμός διάστασης embedding από το .npy και πρόταση μοντέλου.
     _npy = EMBEDDINGS_DIR / "chunk_embeddings.npy"
     _detected_dim: int | None = None
     if _npy.exists():
@@ -294,32 +275,30 @@ with st.sidebar:
     st.caption("📁 Διαθεσιμότητα δεδομένων")
 
     def _status(cond: bool) -> str:
-        return "✅" if cond else "❌"
+        return "OK" if cond else "Missing"
 
     chunks_ok = (CHUNKS_DIR / "financebench_chunks.parquet").exists() or (CHUNKS_DIR / "financebench_chunks.csv").exists()
     emb_ok = (EMBEDDINGS_DIR / "chunk_embeddings.npy").exists()
-    qa_ok = any((QA_DIR / f"rag_qa_results_{p}.csv").exists() or (QA_DIR / f"rag_qa_results_{p}.parquet").exists() for p in PIPELINES)
     eval_ok = (EVAL_DIR / "retrieval_evaluation_comparison.csv").exists()
     figs_ok = FIGURES_DIR.exists() and any(FIGURES_DIR.glob("*.png"))
 
     st.markdown(f"{_status(chunks_ok)} Chunks & Embeddings")
     st.markdown(f"{_status(emb_ok)} FAISS-ready embeddings (.npy)")
-    st.markdown(f"{_status(qa_ok)} QA Results")
     st.markdown(f"{_status(eval_ok)} Evaluation CSVs")
     st.markdown(f"{_status(figs_ok)} Evaluation Figures")
 
 
 # ---------------------------------------------------------------------------
-# Main tabs
+# Κύρια tabs
 # ---------------------------------------------------------------------------
 
-tab_home, tab_query, tab_results, tab_eval = st.tabs(
-    ["🏠 Αρχική", "🔍 Live RAG Query", "📊 Αποτελέσματα", "📈 Αξιολόγηση"]
+tab_home, tab_query, tab_eval = st.tabs(
+    ["🏠 Αρχική", "🔍 Live RAG Query","📈 Αξιολόγηση"]
 )
 
 
 # ===========================================================================
-# TAB 1 — HOME
+# TAB 1 — ΑΡΧΙΚΗ
 # ===========================================================================
 
 with tab_home:
@@ -352,13 +331,13 @@ with tab_home:
 | Βήμα | Εργαλείο |
 |------|---------|
 | PDF Parsing | Docling |
-| Chunking | RecursiveCharacterTextSplitter (800 chars, 150 overlap) |
+| Chunking | Table-aware RecursiveCharacterTextSplitter (1500 chars, 200 overlap) |
 | Embeddings | BAAI/bge-m3 (1024-dim) |
 | Vector Store | FAISS IndexFlatIP |
 | Dense Retrieval | Cosine similarity |
 | Hybrid Retrieval | Dense + BM25 → RRF fusion |
-| Reranking | Cross-encoder |
-| Generation | Gemini 2.5 Flash |
+| Reranking | Cross-encoder (BAAI/bge-reranker-v2-m3) |
+| Generation | gpt-4o-mini |
 """
         )
 
@@ -366,41 +345,22 @@ with tab_home:
         st.subheader("📊 Retrieval Performance")
         perf_data = {
             "Pipeline": ["Dense (Baseline)", "Hybrid", "Hybrid + Reranking ⭐"],
-            "Hit@1": ["47.3%", "56.0%", "67.3%"],
-            "Hit@5": ["74.0%", "78.7%", "84.0%"],
-            "MRR": ["58.6%", "64.8%", "73.8%"],
+            "Hit@1": ["47.3%", "48.6%", "63.3%"],
+            "Hit@5": ["82.0%", "81.3%", "86.0%"],
+            "MRR": ["61.5%", "61.1%", "73.0%"],
         }
         st.dataframe(pd.DataFrame(perf_data), use_container_width=True, hide_index=True)
 
         st.subheader("🤖 Generation Quality (RAGChecker F1)")
         gen_data = {
             "Pipeline": ["Dense", "Hybrid", "Hybrid + Reranking ⭐"],
-            "Faithfulness": ["37.7%", "40.9%", "46.3%"],
-            "Hallucination ↓": ["38.5%", "36.7%", "31.2%"],
-            "F1": ["19.0%", "18.9%", "25.7%"],
+            "Faithfulness": ["45.0%", "45.3%", "50.8%"],
+            "Hallucination ↓": ["38.3%", "34.1%", "28.8%"],
+            "F1": ["18.3%", "22.9%", "27.0%"],
         }
         st.dataframe(pd.DataFrame(gen_data), use_container_width=True, hide_index=True)
 
     st.divider()
-
-    st.subheader("📁 Εταιρίες στο Dataset")
-    companies_info = {
-        "Sector": [
-            "Industrials", "Healthcare", "Financials", "Energy",
-            "Consumer Staples", "Technology", "Communication Services", "Other",
-        ],
-        "Παραδείγματα": [
-            "3M, Boeing, Lockheed Martin",
-            "Johnson & Johnson, Pfizer",
-            "American Express, Goldman Sachs",
-            "ExxonMobil, Chevron",
-            "Coca-Cola, Walmart, P&G",
-            "Adobe, Activision Blizzard",
-            "MGM Resorts",
-            "American Water Works, General Mills",
-        ],
-    }
-    st.dataframe(pd.DataFrame(companies_info), use_container_width=True, hide_index=True)
 
 
 # ===========================================================================
@@ -411,29 +371,46 @@ with tab_query:
     st.header("🔍 Live RAG Query")
     st.markdown(
         "Δοκιμάστε το pipeline με δική σας ερώτηση. "
-        "Απαιτούνται τα αρχεία δεδομένων (chunks + embeddings) και ένα Gemini API key."
+        "Απαιτούνται τα αρχεία δεδομένων (chunks + embeddings) και ένα OpenAI API Key."
     )
 
     data_ready = chunks_ok and emb_ok
 
     if not data_ready:
         st.warning(
-            "⚠️ Τα αρχεία δεδομένων δεν βρέθηκαν. "
+            "Τα αρχεία δεδομένων δεν βρέθηκαν. "
             "Τρέξτε πρώτα τα notebooks **01–06** για να δημιουργηθούν τα chunks και τα embeddings."
         )
         with st.expander("ℹ️ Πώς να στήσετε τα δεδομένα"):
             st.markdown(
                 """
 1. `01_setup_and_config.ipynb` — ρύθμιση paths
-2. `02_load_financebench_sample.ipynb` — φόρτωση dataset
+2. `02_prepare_financebench_dataset.ipynb` — προετοιμασία dataset
 3. `03_parse_pdfs_with_docling.ipynb` — parsing PDF→Markdown
-4. `04_clean_markdown_and_inspect.ipynb` — καθαρισμός
-5. `05_chunking.ipynb` — chunking
-6. `06_embeddings_and_vectorstore.ipynb` — embeddings + FAISS
+4. `04_clean_and_inspect_documents.ipynb` — καθαρισμός κειμένων
+5. `05_create_chunks.ipynb` — δημιουργία chunks
+6. `06_create_embeddings_and_vectorstore.ipynb` — embeddings + FAISS
 
 Τα αρχεία αποθηκεύονται στο `data/`.
                 """
             )
+
+    if data_ready:
+        with st.expander("📚 Δείτε τα διαθέσιμα έγγραφα της βάσης"):
+            chunks_df = load_chunks()
+            if chunks_df is not None and "doc_id" in chunks_df.columns:
+                unique_docs = sorted(chunks_df["doc_id"].dropna().unique())
+                st.markdown(f"**Σύνολο:** {len(unique_docs)} έγγραφα")
+
+                # Προβολή σε μορφή πίνακα με σταθερό ύψος (scrollable)
+                st.dataframe(
+                    pd.DataFrame({"Όνομα Εγγράφου (doc_id)": unique_docs}),
+                    use_container_width=True,
+                    hide_index=True,
+                    height=250
+                )
+            else:
+                st.info("Δεν ήταν δυνατή η ανάκτηση των εγγράφων από τα chunks.")
 
     st.divider()
 
@@ -460,15 +437,15 @@ with tab_query:
             height=120,
         )
 
-        run_disabled = not data_ready or not gemini_api_key or not query_text.strip()
+        run_disabled = not data_ready or not gpt_api_key or not query_text.strip()
         run_btn = st.button("🚀 Εκτέλεση Query", type="primary", disabled=run_disabled)
 
-        if not gemini_api_key:
-            st.caption("⚠️ Εισάγετε Gemini API Key στο sidebar για παραγωγή απάντησης.")
+        if not gpt_api_key:
+            st.caption("Εισάγετε OpenAI API Key στο sidebar για παραγωγή απάντησης.")
         if not data_ready:
-            st.caption("⚠️ Απαιτούνται chunks + embeddings.")
+            st.caption("Απαιτούνται chunks + embeddings.")
 
-    if run_btn and query_text.strip() and data_ready and gemini_api_key:
+    if run_btn and query_text.strip() and data_ready and gpt_api_key:
         with st.status("Εκτελείται RAG pipeline…", expanded=True) as status:
             st.write(f"Φόρτωση embedding model `{embedding_model_name}`…")
             embed_model = load_embedding_model(embedding_model_name)
@@ -483,39 +460,89 @@ with tab_query:
                 st.error("Αδυναμία φόρτωσης δεδομένων.")
                 st.stop()
 
-            st.write("Φόρτωση / δημιουργία FAISS index…")
+            st.write("Φόρτωση / δημιουργία Indices…")
             faiss_index = get_faiss_index(embeddings_matrix)
             if faiss_index is None:
                 st.error("Αδυναμία δημιουργίας FAISS index. Εγκαταστήστε `faiss-cpu`.")
                 st.stop()
 
             st.write("Κωδικοποίηση ερώτησης…")
-            expanded_q = expand_finance_query(query_text)
-            qvec = embed_model.encode([expanded_q], normalize_embeddings=True)
+            qvec = embed_model.encode(query_text, normalize_embeddings=True)
             qvec = np.ascontiguousarray(qvec, dtype=np.float32).reshape(1, -1)
 
-            # Dimension sanity check — helpful error instead of cryptic AssertionError
             index_dim = faiss_index.d
             query_dim = qvec.shape[1]
             if query_dim != index_dim:
                 st.error(
                     f"Διάσταση mismatch: FAISS index έχει {index_dim} dims, "
-                    f"αλλά το query vector έχει {query_dim} dims. "
-                    f"Embeddings shape: {embeddings_matrix.shape}."
+                    f"αλλά το query vector έχει {query_dim} dims."
                 )
                 st.stop()
 
-            st.write("Αναζήτηση στον vector store…")
-            scores_arr, idx_arr = faiss_index.search(qvec, int(top_k))
-            scores_arr, idx_arr = scores_arr[0], idx_arr[0]
+            st.write(f"Αναζήτηση & Retrieval: **{PIPELINE_LABELS[retrieval_method]}**")
+
+            DENSE_CANDIDATES_K = 20
+            BM25_CANDIDATES_K = 10
+            RRF_K = 30
+            DENSE_WEIGHT = 1.0
+            BM25_WEIGHT = 0.2
+
+            final_retrieved_indices = []
+
+            if retrieval_method == "dense":
+                scores_arr, idx_arr = faiss_index.search(qvec, int(top_k))
+                final_retrieved_indices = list(zip(idx_arr[0], scores_arr[0]))
+
+            else:
+                # Πυκνή αναζήτηση
+                dense_scores, dense_idx = faiss_index.search(qvec, DENSE_CANDIDATES_K)
+                dense_results = [(int(idx), float(score)) for idx, score in zip(dense_idx[0], dense_scores[0])]
+
+                # Αναζήτηση BM25
+                bm25_data = get_bm25_data(chunks_df)
+                bm25_results = bm25_score_query_app(query_text, bm25_data, BM25_CANDIDATES_K)
+
+                # Συνένωση αποτελεσμάτων με RRF
+                fused = {}
+                for rank, (global_idx, score) in enumerate(dense_results, start=1):
+                    if global_idx not in fused: fused[global_idx] = {"rrf_score": 0.0}
+                    fused[global_idx]["rrf_score"] += DENSE_WEIGHT / (RRF_K + rank)
+
+                for rank, (global_idx, score) in enumerate(bm25_results, start=1):
+                    if global_idx not in fused: fused[global_idx] = {"rrf_score": 0.0}
+                    fused[global_idx]["rrf_score"] += BM25_WEIGHT / (RRF_K + rank)
+
+                fused_list = sorted([(idx, data["rrf_score"]) for idx, data in fused.items()], key=lambda x: x[1], reverse=True)
+
+                if retrieval_method == "hybrid":
+                    final_retrieved_indices = fused_list[:int(top_k)]
+
+                elif retrieval_method == "hybrid_reranked":
+                    st.write("Επαναξιολόγηση με Cross-Encoder (Reranking)…")
+                    reranker = load_reranker()
+                    if reranker is None:
+                        st.error("Αδυναμία φόρτωσης CrossEncoder. Ελέγξτε τις εξαρτήσεις σας.")
+                        st.stop()
+
+                    candidates = fused_list[:20]
+                    pairs = []
+                    for idx, _ in candidates:
+                        chunk_text = str(chunks_df.iloc[int(idx)]["chunk_text"])
+                        pairs.append([query_text, chunk_text])
+
+                    rerank_scores = reranker.predict(pairs)
+                    reranked_results = [(candidates[i][0], float(rerank_scores[i])) for i in range(len(candidates))]
+                    reranked_results.sort(key=lambda x: x[1], reverse=True)
+
+                    final_retrieved_indices = reranked_results[:int(top_k)]
 
             retrieved = []
-            for rank, (score, idx) in enumerate(zip(scores_arr, idx_arr), start=1):
+            for rank, (idx, score) in enumerate(final_retrieved_indices, start=1):
                 row = chunks_df.iloc[int(idx)]
                 retrieved.append(
                     {
                         "rank": rank,
-                        "score": float(score),
+                        "score": score,
                         "chunk_id": row["chunk_id"],
                         "doc_id": row["doc_id"],
                         "chunk_text": str(row["chunk_text"]),
@@ -528,16 +555,13 @@ with tab_query:
             ]
             context_text = "\n\n" + ("\n\n" + "—" * 60 + "\n\n").join(context_parts)
 
-            st.write("Παραγωγή απάντησης με Gemini…")
-            answer = call_gemini(query_text, context_text, gemini_api_key, generation_model)
+            st.write("Παραγωγή απάντησης με OpenAI…")
+            answer = call_gpt(query_text, context_text, gpt_api_key, generation_model)
 
-            status.update(label="✅ Query ολοκληρώθηκε!", state="complete")
+            status.update(label="Query ολοκληρώθηκε.", state="complete")
 
         st.subheader("💬 Απάντηση")
         st.info(answer)
-
-        with st.expander("🔬 Expanded Query"):
-            st.code(expanded_q, language="text")
 
         st.subheader(f"📄 Top-{top_k} Retrieved Chunks")
         for chunk in retrieved:
@@ -553,112 +577,8 @@ with tab_query:
                     key=f"ct_{chunk['rank']}",
                 )
 
-
 # ===========================================================================
-# TAB 3 — RESULTS EXPLORER
-# ===========================================================================
-
-with tab_results:
-    st.header("📊 Εξερεύνηση QA Αποτελεσμάτων")
-    st.caption(f"Pipeline: **{PIPELINE_LABELS[retrieval_method]}**")
-
-    qa_df = load_qa_results(retrieval_method)
-
-    if qa_df is None:
-        st.warning(
-            f"⚠️ Δεν βρέθηκαν QA results για `{retrieval_method}`. "
-            "Τρέξτε το notebook **10_rag_qa_baseline.ipynb**."
-        )
-    else:
-        # Summary metrics
-        total = len(qa_df)
-        doc_match_rate = qa_df["doc_match"].mean() * 100 if "doc_match" in qa_df.columns else None
-        avg_len = qa_df["generated_answer_len"].mean() if "generated_answer_len" in qa_df.columns else None
-
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Ερωτήσεις", total)
-        if doc_match_rate is not None:
-            m2.metric("Doc Match Rate", f"{doc_match_rate:.1f}%")
-        if avg_len is not None:
-            m3.metric("Μέσο μήκος απάντησης", f"{avg_len:.0f} chars")
-        insuff = (
-            qa_df["generated_answer"]
-            .str.contains("Insufficient evidence", na=False)
-            .sum()
-        ) if "generated_answer" in qa_df.columns else 0
-        m4.metric("Ανεπαρκής context", insuff)
-
-        st.divider()
-
-        # Filters
-        st.subheader("🔎 Φίλτρα")
-        f1, f2, f3, f4 = st.columns(4)
-
-        companies = ["(Όλες)"]
-        if "expected_company" in qa_df.columns:
-            companies += sorted(qa_df["expected_company"].dropna().unique().tolist())
-        sel_company = f1.selectbox("Εταιρία", companies, key="r_company")
-
-        doc_types = ["(Όλοι)"]
-        if "expected_doc_name" in qa_df.columns:
-            # extract type from doc name pattern COMPANY_YEAR_TYPE
-            types = qa_df["expected_doc_name"].dropna().str.extract(r"_(\d{4}Q?\d*_)?(\w+)$")[1].dropna().unique()
-            doc_types += sorted(types.tolist())
-        sel_type = f2.selectbox("Τύπος εγγράφου", doc_types, key="r_type")
-
-        search_q = f3.text_input("Αναζήτηση στην ερώτηση", placeholder="capital expenditure…", key="r_search")
-
-        only_match = f4.checkbox("Μόνο Doc Match ✅", key="r_match")
-        only_insuff = f4.checkbox("Ανεπαρκής context ⚠️", key="r_insuff")
-
-        # Apply filters
-        fdf = qa_df.copy()
-        if sel_company != "(Όλες)" and "expected_company" in fdf.columns:
-            fdf = fdf[fdf["expected_company"] == sel_company]
-        if sel_type != "(Όλοι)" and "expected_doc_name" in fdf.columns:
-            fdf = fdf[fdf["expected_doc_name"].str.contains(sel_type, na=False)]
-        if search_q:
-            fdf = fdf[fdf["question"].str.contains(search_q, case=False, na=False)]
-        if only_match and "doc_match" in fdf.columns:
-            fdf = fdf[fdf["doc_match"] == True]
-        if only_insuff and "generated_answer" in fdf.columns:
-            fdf = fdf[fdf["generated_answer"].str.contains("Insufficient evidence", na=False)]
-
-        st.markdown(f"Εμφανίζονται **{len(fdf)}** / {total} αποτελέσματα")
-
-        for _, row in fdf.head(25).iterrows():
-            question = str(row.get("question", ""))
-            expected = str(row.get("expected_answer", ""))
-            generated = str(row.get("generated_answer", ""))
-            doc_match = row.get("doc_match")
-            top_doc = str(row.get("top_doc_id", ""))
-            expected_doc = str(row.get("expected_doc_name", ""))
-
-            icon = "✅" if doc_match else "❌"
-            label = f"{icon} {question[:110]}{'…' if len(question) > 110 else ''}"
-
-            with st.expander(label):
-                ca, cb = st.columns(2)
-                with ca:
-                    st.markdown("**Expected Answer:**")
-                    st.success(expected[:400])
-                    st.caption(f"📄 Expected Doc: `{expected_doc}`")
-                with cb:
-                    st.markdown("**Generated Answer:**")
-                    preview = generated[:500] + ("…" if len(generated) > 500 else "")
-                    if "Insufficient evidence" in generated:
-                        st.warning(preview)
-                    else:
-                        st.info(preview)
-                    st.caption(f"📄 Retrieved Doc: `{top_doc}`")
-
-                if "context_text" in row and pd.notna(row.get("context_text")):
-                    with st.expander("📄 Context chunks"):
-                        st.text(str(row["context_text"])[:3000])
-
-
-# ===========================================================================
-# TAB 4 — EVALUATION
+# TAB 3 — ΑΞΙΟΛΟΓΗΣΗ
 # ===========================================================================
 
 with tab_eval:
@@ -669,7 +589,7 @@ with tab_eval:
     df_qa_eval = load_csv_eval("qa_evaluation_comparison.csv")
     df_ragas = load_csv_eval("ragas_results.csv")
 
-    # Build combined RAGChecker wide table
+    # Δημιουργία ενιαίου wide table για τα RAGChecker summaries.
     rc_frames = []
     for run in PIPELINES:
         df_rc = load_csv_eval(f"ragchecker_summary_{run}.csv")
@@ -738,7 +658,7 @@ with tab_eval:
 
     if not figs_ok:
         st.warning(
-            "⚠️ Δεν βρέθηκαν evaluation figures. "
+            "Δεν βρέθηκαν evaluation figures. "
             "Τρέξτε τα notebooks **12–15** για να παραχθούν."
         )
     else:
@@ -754,7 +674,7 @@ with tab_eval:
             ("fig9_generator_deep_dive.png", "Figure 9: Generator Deep-Dive"),
         ]
 
-        # display in 2-column grid
+        # Προβολή των figures σε πλέγμα δύο στηλών.
         it = iter(figure_catalog)
         for left_item in it:
             right_item = next(it, None)

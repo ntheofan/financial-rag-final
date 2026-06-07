@@ -3,5 +3,6 @@ pandas
 numpy
 faiss-cpu
 sentence-transformers
+openai
 google-genai
 pyarrow
