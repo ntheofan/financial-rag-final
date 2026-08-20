@@ -158,6 +158,24 @@ class PipelineContractTests(unittest.TestCase):
             notebook_sources["14_ragchecker_evaluation.ipynb"],
         )
 
+    def test_answer_generation_executes_all_retrieval_sources(self) -> None:
+        payload = json.loads(
+            (NOTEBOOKS_DIR / "10_answer_generation.ipynb").read_text(
+                encoding="utf-8"
+            )
+        )
+        multi_source_cells = [
+            cell
+            for cell in payload["cells"]
+            if "generated_run_summaries = {}" in "".join(cell.get("source", []))
+        ]
+
+        self.assertEqual(len(multi_source_cells), 1)
+        self.assertEqual(multi_source_cells[0]["cell_type"], "code")
+        source = "".join(multi_source_cells[0]["source"])
+        self.assertIn("for source in RETRIEVAL_SOURCES_TO_GENERATE", source)
+        self.assertIn("run_qa_generation_for_source", source)
+
     def test_reranking_candidate_contract_is_explicit(self) -> None:
         contracts = self.config["contracts"]
         self.assertEqual(contracts["hybrid_candidates_per_query"], 20)
