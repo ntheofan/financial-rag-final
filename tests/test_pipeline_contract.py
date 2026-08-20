@@ -3,6 +3,12 @@ import re
 import unittest
 from pathlib import Path
 
+try:
+    import pandas as pd
+except ModuleNotFoundError:
+    pd = None
+
+from scripts.pipeline_profile import apply_profile_to_dataset, resolve_profile_settings
 from scripts.run_kaggle_pipeline import (
     REPO_ROOT,
     load_config,
@@ -56,6 +62,79 @@ class PipelineContractTests(unittest.TestCase):
             path = Path(output)
             self.assertFalse(path.is_absolute(), output)
             self.assertNotIn("..", path.parts, output)
+
+    def test_full_and_pilot_profiles_are_explicit(self) -> None:
+        profiles = self.config["profiles"]
+        full = resolve_profile_settings("full", definitions=profiles)
+        pilot = resolve_profile_settings("pilot", definitions=profiles)
+
+        self.assertIsNone(full["sample_size"])
+        self.assertTrue(full["publication_eligible"])
+        self.assertEqual(pilot["sample_size"], 15)
+        self.assertEqual(pilot["sample_seed"], 42)
+        self.assertFalse(pilot["publication_eligible"])
+        self.assertIn(
+            "data/interim/pipeline_profile.json",
+            self.config["required_outputs"]["bootstrap"],
+        )
+
+        with self.assertRaises(ValueError):
+            resolve_profile_settings("full", sample_size=15, definitions=profiles)
+
+    @unittest.skipIf(
+        pd is None, "pandas is not installed in the static-check environment"
+    )
+    def test_pilot_selection_is_exact_and_deterministic(self) -> None:
+        questions = pd.DataFrame(
+            [
+                {
+                    "financebench_id": f"q{index:02d}",
+                    "doc_name": f"doc{index % 8}",
+                    "question_type": ("domain", "metrics", "novel")[index % 3],
+                }
+                for index in range(30)
+            ]
+        )
+        documents = pd.DataFrame(
+            [
+                {
+                    "doc_name": f"doc{index}",
+                    "doc_type": ("10k", "10q", "8k", "Earnings")[index % 4],
+                }
+                for index in range(8)
+            ]
+        )
+        settings = resolve_profile_settings("pilot", sample_size=15, sample_seed=42)
+
+        first_questions, first_documents, first_manifest = apply_profile_to_dataset(
+            questions, documents, settings
+        )
+        second_questions, second_documents, second_manifest = apply_profile_to_dataset(
+            questions, documents, settings
+        )
+
+        self.assertEqual(len(first_questions), 15)
+        self.assertEqual(first_questions["financebench_id"].nunique(), 15)
+        self.assertEqual(
+            first_questions["financebench_id"].tolist(),
+            second_questions["financebench_id"].tolist(),
+        )
+        self.assertEqual(
+            first_manifest["selection_sha256"], second_manifest["selection_sha256"]
+        )
+        self.assertEqual(
+            set(first_documents["doc_name"]), set(second_documents["doc_name"])
+        )
+        self.assertFalse(first_manifest["publication_eligible"])
+
+    def test_bootstrap_applies_profile_before_downstream_processing(self) -> None:
+        source = (
+            NOTEBOOKS_DIR / "02_prepare_financebench_dataset.ipynb"
+        ).read_text(encoding="utf-8")
+        self.assertIn("profile_settings_from_environment", source)
+        self.assertIn("apply_pipeline_run_profile", source)
+        self.assertIn("apply_profile_to_dataset", source)
+        self.assertIn("PROFILE_MANIFEST_RELATIVE_PATH", source)
 
     def test_canonical_notebooks_reject_placeholder_results(self) -> None:
         notebook_sources = {

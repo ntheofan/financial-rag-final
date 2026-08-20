@@ -5,6 +5,18 @@
     "mount_slug": "financebench-sample-dataset",
     "environment_variable": "FINANCEBENCH_KAGGLE_DATASET_DIR"
   },
+  "profiles": {
+    "full": {
+      "sample_size": null,
+      "sample_seed": 42,
+      "publication_eligible": true
+    },
+    "pilot": {
+      "sample_size": 15,
+      "sample_seed": 42,
+      "publication_eligible": false
+    }
+  },
   "stage_order": [
     "bootstrap",
     "retrieval",
@@ -47,6 +59,7 @@
   },
   "required_outputs": {
     "bootstrap": [
+      "data/interim/pipeline_profile.json",
       "data/interim/financebench_open_source_working.csv",
       "data/interim/docling_parse_manifest.csv",
       "data/interim/markdown_cleaning_manifest.csv",
@@ -81,6 +94,7 @@
   },
   "bundle_paths": [
     "configs",
+    "data/interim/pipeline_profile.json",
     "data/interim/financebench_open_source_working.csv",
     "data/interim/docling_parse_manifest.csv",
     "data/interim/markdown_cleaning_manifest.csv",

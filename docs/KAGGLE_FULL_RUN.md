@@ -1,4 +1,4 @@
-# Canonical full run στο Kaggle
+# Pilot και canonical full run στο Kaggle
 
 Το πλήρες pipeline εκτελείται στο Kaggle από καθαρό clone του repository. Ο
 runner εκτελεί σειριακά τα 15 notebooks, σταματά στο πρώτο σφάλμα και δημιουργεί
@@ -55,7 +55,8 @@ manifest ή artifact.
 ```python
 !python scripts/run_kaggle_pipeline.py \
     --stage all \
-    --run-id publication-dry-run \
+    --profile pilot \
+    --run-id pilot-dry-run \
     --require-kaggle-dataset \
     --dry-run
 ```
@@ -63,11 +64,49 @@ manifest ή artifact.
 Ο προέλεγχος επαληθεύει το pipeline configuration, τη σειρά και την ύπαρξη των
 notebooks. Δεν εκτελεί τα πειράματα.
 
-## 5. Πλήρης εκτέλεση
+## 5. Πραγματικό pilot run
+
+Πριν από το publication run εκτελέστε το ενιαίο pilot profile:
 
 ```python
 !python scripts/run_kaggle_pipeline.py \
     --stage all \
+    --profile pilot \
+    --run-id pilot-v1 \
+    --require-kaggle-dataset
+```
+
+Το pilot επιλέγει deterministic και stratified δείγμα 15 ερωτήσεων με seed 42.
+Η επιλογή εφαρμόζεται στο notebook 02, πριν από το parsing. Κατά συνέπεια μόνο
+τα έγγραφα του επιλεγμένου δείγματος περνούν από Docling, cleaning, chunking,
+embeddings, retrieval, generation, RAGAS και RAGChecker. Τα ακριβή IDs, έγγραφα
+και το SHA-256 της επιλογής αποθηκεύονται στο
+`data/interim/pipeline_profile.json`.
+
+Μπορείτε να αλλάξετε το μέγεθος ή το seed μόνο για διαγνωστική εκτέλεση:
+
+```python
+!python scripts/run_kaggle_pipeline.py \
+    --stage all \
+    --profile pilot \
+    --sample-size 20 \
+    --sample-seed 42 \
+    --run-id pilot-20-v1 \
+    --require-kaggle-dataset
+```
+
+Τα pilot manifests έχουν `"publication_eligible": false` και οι μετρικές τους
+δεν χρησιμοποιούνται ως τελικά αποτελέσματα της δημοσίευσης.
+
+## 6. Πλήρης εκτέλεση
+
+Μετά από επιτυχημένο pilot, ξεκινήστε **νέο καθαρό Kaggle session**, κάντε νέο
+clone και εκτελέστε:
+
+```python
+!python scripts/run_kaggle_pipeline.py \
+    --stage all \
+    --profile full \
     --run-id publication-v1 \
     --require-kaggle-dataset
 ```
@@ -76,7 +115,7 @@ notebooks. Δεν εκτελεί τα πειράματα.
 απαιτεί καθαρά `data/interim/` και `data/processed/`, ώστε να μην αναμειχθούν
 artifacts από διαφορετικές εκτελέσεις.
 
-## 6. Παραδοτέα του run
+## 7. Παραδοτέα του run
 
 Με `--run-id publication-v1` δημιουργούνται:
 
@@ -97,14 +136,20 @@ run θεωρείται έγκυρο μόνο όταν το `run_manifest.json` �
 `"status": "completed"`. Τα notebooks παραγωγής και LLM evaluation αποτυγχάνουν
 αν λείπει το API key ή αν δημιουργηθούν dry-run/placeholder αποτελέσματα.
 
-## Προαιρετική εκτέλεση ανά στάδιο
+## Προαιρετική pilot εκτέλεση ανά στάδιο
 
 Ο runner υποστηρίζει `bootstrap`, `retrieval`, `generation` και `evaluation`:
 
 ```python
-!python scripts/run_kaggle_pipeline.py --stage retrieval --run-id retrieval-v1
+!python scripts/run_kaggle_pipeline.py --stage bootstrap --profile pilot --run-id pilot-bootstrap-v1 --require-kaggle-dataset --no-bundle
+!python scripts/run_kaggle_pipeline.py --stage retrieval --profile pilot --run-id pilot-retrieval-v1 --require-kaggle-dataset --no-bundle
+!python scripts/run_kaggle_pipeline.py --stage generation --profile pilot --run-id pilot-generation-v1 --require-kaggle-dataset --no-bundle
+!python scripts/run_kaggle_pipeline.py --stage evaluation --profile pilot --run-id pilot-evaluation-v1 --require-kaggle-dataset
 ```
 
 Η τμηματική εκτέλεση προϋποθέτει ότι τα artifacts των προηγούμενων σταδίων
-βρίσκονται ήδη στις αναμενόμενες διαδρομές του ίδιου checkout. Για το τελικό
-πειραματικό αποτέλεσμα προτιμάται το ενιαίο `--stage all`.
+βρίσκονται ήδη στις αναμενόμενες διαδρομές του ίδιου checkout. Το ίδιο
+`--profile`, `--sample-size` και `--sample-seed` πρέπει να χρησιμοποιούνται σε
+κάθε στάδιο. Ο runner συγκρίνει τις παραμέτρους με το profile manifest και
+σταματά αν εντοπίσει ανάμειξη artifacts. Για το τελικό πειραματικό αποτέλεσμα
+προτιμάται το ενιαίο `--stage all --profile full`.

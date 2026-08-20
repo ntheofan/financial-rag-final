@@ -10,6 +10,7 @@
 - `app.py`: Streamlit εφαρμογή για live ερωτήσεις, επιλογή retrieval strategy και προβολή evaluation αποτελεσμάτων.
 - `notebooks/`: τελική notebook ροή από setup μέχρι thesis figures.
 - `scripts/run_kaggle_pipeline.py`: canonical orchestration των 15 notebooks.
+- `scripts/pipeline_profile.py`: κοινή επιλογή και επαλήθευση full/pilot dataset profile.
 - `configs/kaggle_pipeline.json`: δηλωτική σειρά σταδίων και απαιτούμενων outputs.
 - `notebooks/figures/`: τελικά διαγράμματα που χρησιμοποιούνται στην ανάλυση.
 - `data/raw/`: source PDFs και FinanceBench metadata.
@@ -90,8 +91,20 @@ Internet ενεργοποιημένα. Η επίσημη διαδρομή ανα
 
 Αναλυτικές, έτοιμες για αντιγραφή οδηγίες: [Canonical full run στο Kaggle](docs/KAGGLE_FULL_RUN.md).
 
+Πριν από κάθε publication run εκτελείται πραγματικό end-to-end pilot. Το
+profile εφαρμόζεται πριν από το PDF parsing, ώστε parsing, chunks, embeddings,
+retrieval, generation και evaluation να χρησιμοποιούν ακριβώς το ίδιο δείγμα:
+
 ```bash
-python scripts/run_kaggle_pipeline.py --stage all --run-id publication-v1 --require-kaggle-dataset
+python scripts/run_kaggle_pipeline.py --stage all --profile pilot --run-id pilot-v1 --require-kaggle-dataset
+```
+
+Το προεπιλεγμένο pilot περιλαμβάνει 15 deterministic, stratified ερωτήσεις
+(seed 42) και μόνο τα αντίστοιχα οικονομικά έγγραφα. Δεν είναι κατάλληλο για
+αναφορά τελικών μετρικών σε δημοσίευση.
+
+```bash
+python scripts/run_kaggle_pipeline.py --stage all --profile full --run-id publication-v1 --require-kaggle-dataset
 ```
 
 

@@ -22,6 +22,19 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
+try:
+    from scripts.pipeline_profile import (
+        PROFILE_MANIFEST_RELATIVE_PATH,
+        export_profile_environment,
+        resolve_profile_settings,
+    )
+except ModuleNotFoundError:  # Direct execution: python scripts/run_kaggle_pipeline.py
+    from pipeline_profile import (  # type: ignore[no-redef]
+        PROFILE_MANIFEST_RELATIVE_PATH,
+        export_profile_environment,
+        resolve_profile_settings,
+    )
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG = REPO_ROOT / "configs" / "kaggle_pipeline.json"
@@ -152,7 +165,13 @@ def git_state() -> dict[str, Any]:
 
 def load_config(path: Path) -> dict[str, Any]:
     config = json.loads(path.read_text(encoding="utf-8"))
-    required = {"stage_order", "stages", "api_notebooks", "required_outputs"}
+    required = {
+        "stage_order",
+        "stages",
+        "api_notebooks",
+        "profiles",
+        "required_outputs",
+    }
     missing = sorted(required - set(config))
     if missing:
         raise ValueError(f"Pipeline config is missing keys: {missing}")
@@ -292,6 +311,116 @@ def validate_required_outputs(relative_paths: Iterable[str]) -> None:
         raise RuntimeError("Required output validation failed:\n- " + "\n- ".join(failures))
 
 
+def load_profile_manifest() -> dict[str, Any]:
+    path = REPO_ROOT / PROFILE_MANIFEST_RELATIVE_PATH
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"Run profile manifest is missing: {PROFILE_MANIFEST_RELATIVE_PATH}"
+        )
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    required = {
+        "profile",
+        "publication_eligible",
+        "sample_seed",
+        "requested_sample_size",
+        "actual_question_count",
+        "actual_document_count",
+        "selected_financebench_ids",
+        "selected_doc_names",
+        "selection_sha256",
+    }
+    missing = sorted(required - set(payload))
+    if missing:
+        raise RuntimeError(f"Run profile manifest is missing keys: {missing}")
+    return payload
+
+
+def validate_profile_manifest(run_profile: dict[str, Any]) -> dict[str, Any]:
+    """Reject cross-stage reuse of artifacts from a different run profile."""
+
+    payload = load_profile_manifest()
+    comparisons = {
+        "profile": run_profile["name"],
+        "publication_eligible": run_profile["publication_eligible"],
+        "sample_seed": run_profile["sample_seed"],
+        "requested_sample_size": run_profile["sample_size"],
+    }
+    mismatches = {
+        key: {"expected": expected, "actual": payload.get(key)}
+        for key, expected in comparisons.items()
+        if payload.get(key) != expected
+    }
+    if mismatches:
+        raise RuntimeError(
+            "Existing artifacts belong to a different run profile: "
+            + json.dumps(mismatches, ensure_ascii=False, sort_keys=True)
+        )
+
+    selected_ids = [str(value) for value in payload["selected_financebench_ids"]]
+    if len(selected_ids) != int(payload["actual_question_count"]):
+        raise RuntimeError("Run profile question count does not match its selected IDs")
+    if len(selected_ids) != len(set(selected_ids)):
+        raise RuntimeError("Run profile contains duplicate FinanceBench IDs")
+
+    import pandas as pd
+
+    working_path = REPO_ROOT / "data" / "interim" / "financebench_open_source_working.csv"
+    if not working_path.is_file():
+        raise FileNotFoundError(f"Working dataset is missing: {working_path}")
+    working = pd.read_csv(working_path, usecols=["financebench_id", "doc_name"])
+    working_ids = set(working["financebench_id"].astype(str))
+    if working_ids != set(selected_ids):
+        raise RuntimeError("Working dataset IDs do not match the run profile manifest")
+    working_docs = set(working["doc_name"].dropna().astype(str))
+    if working_docs != set(str(value) for value in payload["selected_doc_names"]):
+        raise RuntimeError("Working dataset documents do not match the run profile manifest")
+    return payload
+
+
+def validate_profile_outputs(
+    run_profile: dict[str, Any], notebook_names: Iterable[str]
+) -> None:
+    """Verify that retrieval and QA artifacts preserve the selected ID set."""
+
+    payload = validate_profile_manifest(run_profile)
+    expected_ids = set(str(value) for value in payload["selected_financebench_ids"])
+    selected = set(notebook_names)
+
+    import pandas as pd
+
+    paths: list[Path] = []
+    if selected & {
+        "07_dense_retrieval.ipynb",
+        "08_hybrid_retrieval.ipynb",
+        "09_reranking.ipynb",
+    }:
+        paths.extend(
+            REPO_ROOT
+            / "data"
+            / "processed"
+            / "retrieval_results"
+            / f"retrieval_results_{run_name}.csv"
+            for run_name in ("dense", "hybrid", "hybrid_reranked")
+        )
+    if "10_answer_generation.ipynb" in selected:
+        paths.extend(
+            REPO_ROOT
+            / "data"
+            / "processed"
+            / "qa_results"
+            / f"rag_qa_results_{run_name}.csv"
+            for run_name in ("dense", "hybrid", "hybrid_reranked")
+        )
+
+    for path in paths:
+        frame = pd.read_csv(path, usecols=["financebench_id"])
+        artifact_ids = set(frame["financebench_id"].astype(str))
+        if artifact_ids != expected_ids:
+            raise RuntimeError(
+                f"{path.name} does not contain exactly the IDs declared by the run profile"
+            )
+
+
 def validate_api_outputs(notebook_names: Iterable[str]) -> None:
     selected = set(notebook_names)
 
@@ -390,11 +519,14 @@ def validate_retrieval_outputs(
             )
 
 
-def validate_stage_checkpoint(config: dict[str, Any], stage: str) -> None:
+def validate_stage_checkpoint(
+    config: dict[str, Any], stage: str, run_profile: dict[str, Any]
+) -> None:
     stage_notebooks = config["stages"][stage]
     validate_required_outputs(config["required_outputs"].get(stage, []))
     validate_retrieval_outputs(config, stage_notebooks)
     validate_api_outputs(stage_notebooks)
+    validate_profile_outputs(run_profile, stage_notebooks)
 
 
 def copy_bundle_artifacts(config: dict[str, Any], artifacts_dir: Path) -> list[str]:
@@ -437,6 +569,23 @@ def parse_args() -> argparse.Namespace:
         "--stage",
         default="all",
         help="all or one configured stage.",
+    )
+    parser.add_argument(
+        "--profile",
+        default="full",
+        help="Run profile declared in the pipeline configuration (full or pilot).",
+    )
+    parser.add_argument(
+        "--sample-size",
+        type=int,
+        default=None,
+        help="Override the configured pilot sample size; invalid for the full profile.",
+    )
+    parser.add_argument(
+        "--sample-seed",
+        type=int,
+        default=None,
+        help="Override the deterministic sample seed for a pilot run.",
     )
     parser.add_argument(
         "--run-id",
@@ -496,6 +645,14 @@ def main() -> int:
     if args.stage not in valid_stages:
         raise ValueError(f"Unknown stage {args.stage!r}; expected one of {sorted(valid_stages)}")
 
+    run_profile = resolve_profile_settings(
+        profile=args.profile,
+        sample_size=args.sample_size,
+        sample_seed=args.sample_seed,
+        definitions=config.get("profiles"),
+    )
+    export_profile_environment(run_profile)
+
     notebooks = selected_notebooks(config, args.stage)
     validate_notebooks(notebooks)
 
@@ -519,12 +676,21 @@ def main() -> int:
         )
 
     api_selected = sorted(set(notebooks) & set(config["api_notebooks"]))
-    if api_selected and not os.getenv("OPENAI_API_KEY") and not args.allow_missing_api_key:
+    if (
+        api_selected
+        and not args.dry_run
+        and not os.getenv("OPENAI_API_KEY")
+        and not args.allow_missing_api_key
+    ):
         raise RuntimeError(
             "OPENAI_API_KEY is required by: " + ", ".join(api_selected)
         )
 
-    if args.stage == "all" and not args.allow_existing_artifacts:
+    if (
+        args.stage == "all"
+        and not args.dry_run
+        and not args.allow_existing_artifacts
+    ):
         existing = existing_data_artifacts()
         if existing:
             preview = "\n- ".join(str(path.relative_to(REPO_ROOT)) for path in existing[:20])
@@ -532,6 +698,15 @@ def main() -> int:
                 "A canonical full run must start without existing interim/processed artifacts. "
                 "Use a clean clone or pass --allow-existing-artifacts explicitly.\n- " + preview
             )
+
+    if args.stage not in {"all", "bootstrap"} and not args.dry_run:
+        stage_index = config["stage_order"].index(args.stage)
+        upstream_notebooks = [
+            notebook
+            for stage_name in config["stage_order"][:stage_index]
+            for notebook in config["stages"][stage_name]
+        ]
+        validate_profile_outputs(run_profile, upstream_notebooks)
 
     run_id = args.run_id or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     run_root = args.run_root.resolve()
@@ -549,6 +724,8 @@ def main() -> int:
         "run_id": run_id,
         "status": "dry_run" if args.dry_run else "running",
         "stage": args.stage,
+        "profile": run_profile,
+        "publication_eligible": bool(run_profile["publication_eligible"]),
         "started_at": utc_now(),
         "finished_at": None,
         "repo_root": str(REPO_ROOT),
@@ -582,6 +759,11 @@ def main() -> int:
 
     print(f"Run ID: {run_id}")
     print(f"Stage: {args.stage}")
+    print(f"Profile: {run_profile['name']}")
+    print(f"Sample size: {run_profile['sample_size'] or 'all questions'}")
+    print(f"Sample seed: {run_profile['sample_seed']}")
+    if not run_profile["publication_eligible"]:
+        print("PILOT RUN: outputs are diagnostic and not publication-eligible.")
     print("Notebooks:")
     for notebook in notebooks:
         print(f"- {notebook}")
@@ -616,11 +798,12 @@ def main() -> int:
             )
             if completed_stage is not None:
                 print(f"Validating completed stage: {completed_stage}")
-                validate_stage_checkpoint(config, completed_stage)
+                validate_stage_checkpoint(config, completed_stage, run_profile)
 
         validate_required_outputs(manifest["required_outputs"])
         validate_retrieval_outputs(config, notebooks)
         validate_api_outputs(notebooks)
+        validate_profile_outputs(run_profile, notebooks)
 
         artifacts_dir = run_dir / "artifacts"
         manifest["copied_bundle_paths"] = copy_bundle_artifacts(config, artifacts_dir)

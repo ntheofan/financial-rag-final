@@ -65,3 +65,15 @@
 - Προστέθηκαν ελαφροί pipeline contract tests και GitHub Actions workflow.
 - Αφαιρέθηκαν όλα τα αποθηκευμένα outputs/execution counts από τα source
   notebooks· τα outputs διατηρούνται μόνο στα versioned run bundles.
+
+## 7. End-to-end pilot profile
+
+- Προστέθηκαν ρητά `pilot` και `full` profiles στον Kaggle runner.
+- Το pilot επιλέγει deterministic, stratified δείγμα 15 ερωτήσεων (seed 42)
+  μέσα στο notebook 02, πριν από PDF parsing, cleaning, chunking και embeddings.
+- Αποθηκεύεται `pipeline_profile.json` με τα ακριβή FinanceBench IDs, τα σχετικά
+  έγγραφα, τις κατανομές του δείγματος και SHA-256 fingerprint της επιλογής.
+- Κάθε downstream stage απορρίπτει artifacts που ανήκουν σε διαφορετικό
+  profile, sample size ή seed.
+- Τα pilot run manifests χαρακτηρίζονται ρητά ως μη κατάλληλα για publication
+  metrics (`publication_eligible=false`).
