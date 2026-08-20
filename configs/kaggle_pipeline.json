@@ -1,0 +1,95 @@
+{
+  "schema_version": 1,
+  "kaggle_dataset": {
+    "handle": "theofanisnikolaou/financebench-sample-dataset",
+    "mount_slug": "financebench-sample-dataset",
+    "environment_variable": "FINANCEBENCH_KAGGLE_DATASET_DIR"
+  },
+  "stage_order": [
+    "bootstrap",
+    "retrieval",
+    "generation",
+    "evaluation"
+  ],
+  "stages": {
+    "bootstrap": [
+      "01_setup_and_config.ipynb",
+      "02_prepare_financebench_dataset.ipynb",
+      "03_parse_pdfs_with_docling.ipynb",
+      "04_clean_and_inspect_documents.ipynb",
+      "05_create_chunks.ipynb"
+    ],
+    "retrieval": [
+      "06_create_embeddings_and_vectorstore.ipynb",
+      "07_dense_retrieval.ipynb",
+      "08_hybrid_retrieval.ipynb",
+      "09_reranking.ipynb"
+    ],
+    "generation": [
+      "10_answer_generation.ipynb"
+    ],
+    "evaluation": [
+      "11_evaluate_retrieval_and_qa.ipynb",
+      "12_error_analysis.ipynb",
+      "13_ragas_evaluation.ipynb",
+      "14_ragchecker_evaluation.ipynb",
+      "15_thesis_figures_and_tables.ipynb"
+    ]
+  },
+  "api_notebooks": [
+    "10_answer_generation.ipynb",
+    "13_ragas_evaluation.ipynb",
+    "14_ragchecker_evaluation.ipynb"
+  ],
+  "contracts": {
+    "hybrid_candidates_per_query": 20,
+    "reranked_results_per_query": 10
+  },
+  "required_outputs": {
+    "bootstrap": [
+      "data/interim/financebench_open_source_working.csv",
+      "data/interim/docling_parse_manifest.csv",
+      "data/interim/markdown_cleaning_manifest.csv",
+      "data/processed/chunks/financebench_chunks.csv"
+    ],
+    "retrieval": [
+      "data/processed/embeddings/chunk_embeddings.npy",
+      "data/processed/embeddings/financebench_faiss.index",
+      "data/processed/retrieval_results/retrieval_results_dense.csv",
+      "data/processed/retrieval_results/retrieval_results_hybrid.csv",
+      "data/processed/retrieval_results/retrieval_results_hybrid_reranked.csv",
+      "data/processed/retrieval_results/retrieval_manifest_hybrid_reranked.csv"
+    ],
+    "generation": [
+      "data/processed/qa_results/rag_qa_results_dense.csv",
+      "data/processed/qa_results/rag_qa_results_hybrid.csv",
+      "data/processed/qa_results/rag_qa_results_hybrid_reranked.csv",
+      "data/processed/qa_results/rag_qa_stats_dense.json",
+      "data/processed/qa_results/rag_qa_stats_hybrid.json",
+      "data/processed/qa_results/rag_qa_stats_hybrid_reranked.json"
+    ],
+    "evaluation": [
+      "data/processed/evaluation/retrieval_evaluation_comparison.csv",
+      "data/processed/evaluation/qa_evaluation_comparison.csv",
+      "data/processed/evaluation/ragas_results.csv",
+      "data/processed/evaluation/ragchecker_results_dense.json",
+      "data/processed/evaluation/ragchecker_results_hybrid.json",
+      "data/processed/evaluation/ragchecker_results_reranked.json",
+      "data/processed/error_analysis/error_cross_run_comparison.csv",
+      "notebooks/figures/fig1_retrieval_performance.png"
+    ]
+  },
+  "bundle_paths": [
+    "configs",
+    "data/interim/financebench_open_source_working.csv",
+    "data/interim/docling_parse_manifest.csv",
+    "data/interim/markdown_cleaning_manifest.csv",
+    "data/processed/chunks",
+    "data/processed/embeddings",
+    "data/processed/retrieval_results",
+    "data/processed/qa_results",
+    "data/processed/evaluation",
+    "data/processed/error_analysis",
+    "notebooks/figures"
+  ]
+}

@@ -59,11 +59,11 @@ Rules:
 - If the question asks whether a metric is not useful or not relevant, explain that only if the context supports it.
 """
 
-PIPELINES = ["dense", "hybrid", "hybrid_reranked"]
+PIPELINES = ["dense", "hybrid", "reranked"]
 PIPELINE_LABELS = {
     "dense": "Dense (Baseline)",
     "hybrid": "Hybrid (Dense + BM25)",
-    "hybrid_reranked": "Hybrid + Reranking",
+    "reranked": "Hybrid + Reranking",
 }
 
 # ---------------------------------------------------------------------------
@@ -193,7 +193,7 @@ def call_gpt(question: str, context_text: str, api_key: str, model: str) -> str:
     try:
         from openai import OpenAI
 
-        # Περνάμε το API key μόνο στον τοπικό client, χωρίς αποθήκευση.
+        # Το API key περνά μόνο στον τοπικό client, χωρίς αποθήκευση.
         client = OpenAI(api_key=api_key)
 
         user_prompt = f"Context:\n{context_text}\n\nQuestion:\n{question}"
@@ -242,11 +242,11 @@ with st.sidebar:
         index=2,
     )
 
-    top_k: int = st.slider("Top-K Chunks", min_value=1, max_value=10, value=5)
+    top_k: int = 5
 
     generation_model: str = st.selectbox(
         "Μοντέλο Παραγωγής (OpenAI)",
-        ["gpt-4o-mini", "gpt-4o", "gpt-3.5-turbo"],
+        ["gpt-4o-mini", "gpt-4o", "gpt-5.4-nano"],
     )
 
     # Αυτόματος εντοπισμός διάστασης embedding από το .npy και πρόταση μοντέλου.
@@ -331,7 +331,7 @@ with tab_home:
 | Βήμα | Εργαλείο |
 |------|---------|
 | PDF Parsing | Docling |
-| Chunking | Table-aware RecursiveCharacterTextSplitter (1500 chars, 200 overlap) |
+| Chunking | Markdown-aware RecursiveCharacterTextSplitter (1500 chars, 200 overlap) |
 | Embeddings | BAAI/bge-m3 (1024-dim) |
 | Vector Store | FAISS IndexFlatIP |
 | Dense Retrieval | Cosine similarity |
@@ -345,9 +345,9 @@ with tab_home:
         st.subheader("📊 Retrieval Performance")
         perf_data = {
             "Pipeline": ["Dense (Baseline)", "Hybrid", "Hybrid + Reranking ⭐"],
-            "Hit@1": ["47.3%", "48.6%", "63.3%"],
-            "Hit@5": ["82.0%", "81.3%", "86.0%"],
-            "MRR": ["61.5%", "61.1%", "73.0%"],
+            "Hit@1": ["16.7%", "18.7%", "26.0%"],
+            "Hit@5": ["38.0%", "38.7%", "44.7%"],
+            "MRR": ["25.8%", "26.7%", "32.8%"],
         }
         st.dataframe(pd.DataFrame(perf_data), use_container_width=True, hide_index=True)
 
@@ -419,8 +419,8 @@ with tab_query:
     with col_ex:
         st.markdown("**Παραδείγματα ερωτήσεων:**")
         example_questions = [
-            "What is the FY2018 capital expenditure for 3M?",
-            "What is the year-end FY2018 net PP&E for 3M?",
+            "What is Coca Cola's FY2021 COGS % margin? Calculate what was asked by utilizing the line items clearly shown in the income statement.",
+            "As of FY2023Q1, by how many percentage points did Pepsico raise full year guidance in respect of core constant currency EPS growth?",
             "Does 3M maintain a stable trend of dividend distribution?",
             "What drove operating margin change as of FY2022 for 3M?",
             "What is the FY2019 fixed asset turnover ratio for Activision Blizzard?",
@@ -517,7 +517,7 @@ with tab_query:
                 if retrieval_method == "hybrid":
                     final_retrieved_indices = fused_list[:int(top_k)]
 
-                elif retrieval_method == "hybrid_reranked":
+                elif retrieval_method == "reranked":
                     st.write("Επαναξιολόγηση με Cross-Encoder (Reranking)…")
                     reranker = load_reranker()
                     if reranker is None:

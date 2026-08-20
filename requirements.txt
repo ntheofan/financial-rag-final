@@ -1,6 +1,7 @@
 jupyter
 notebook
 ipykernel
+kagglehub
 pandas
 numpy
 matplotlib

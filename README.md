@@ -9,6 +9,8 @@
 
 - `app.py`: Streamlit εφαρμογή για live ερωτήσεις, επιλογή retrieval strategy και προβολή evaluation αποτελεσμάτων.
 - `notebooks/`: τελική notebook ροή από setup μέχρι thesis figures.
+- `scripts/run_kaggle_pipeline.py`: canonical orchestration των 15 notebooks.
+- `configs/kaggle_pipeline.json`: δηλωτική σειρά σταδίων και απαιτούμενων outputs.
 - `notebooks/figures/`: τελικά διαγράμματα που χρησιμοποιούνται στην ανάλυση.
 - `data/raw/`: source PDFs και FinanceBench metadata.
 - `data/interim/`: parsed/cleaned markdown και ενδιάμεσοι πίνακες.
@@ -20,11 +22,11 @@
 
 1. PDF parsing με Docling
 2. Markdown cleaning και επιθεώρηση
-3. Table-aware chunking με `chunk_size=1500`, `chunk_overlap=200`
+3. Markdown-aware structural chunking με `chunk_size=1500`, `chunk_overlap=200`
 4. Embeddings με `BAAI/bge-m3` και FAISS `IndexFlatIP`
 5. Dense retrieval baseline
-6. Hybrid retrieval με BM25 και Reciprocal Rank Fusion
-7. Cross-encoder reranking με `BAAI/bge-reranker-v2-m3`
+6. Hybrid retrieval με BM25 και Reciprocal Rank Fusion (20 υποψήφιοι ανά query)
+7. Cross-encoder reranking με `BAAI/bge-reranker-v2-m3` (τελικό top-10)
 8. RAG answer generation με OpenAI API
 9. Evaluation με retrieval metrics, deterministic QA metrics, RAGAS και RAGChecker
 10. Παραγωγή τελικών figures για τη διπλωματική
@@ -65,7 +67,7 @@ pip install -r streamlit_requirements.txt
 
 Μην αποθηκεύετε API keys μέσα σε notebooks ή source files.
 
-Δημιουργήστε τοπικά ένα `.env` από το `.env.example` ή ορίστε τη μεταβλητή περιβάλλοντος:
+Αντιγράψτε το `.env.example` σε `.env` και συμπληρώστε το κλειδί σας, ή ορίστε τη μεταβλητή περιβάλλοντος:
 
 ```bash
 setx OPENAI_API_KEY ...
@@ -77,7 +79,21 @@ setx OPENAI_API_KEY ...
 [Environment]::SetEnvironmentVariable("OPENAI_API_KEY", "...", "User")
 ```
 
-Το `.env` αγνοείται από git.
+Σε περιβάλλον Kaggle, το κλειδί ορίζεται μέσω Kaggle Secrets (Add-ons → Secrets) και διαβάζεται από το περιβάλλον εκτέλεσης.
+
+## Περιβάλλον Εκτέλεσης
+
+Το canonical full run μπορεί να εκτελεστεί εξ ολοκλήρου στο Kaggle με GPU και
+Internet ενεργοποιημένα. Η επίσημη διαδρομή αναπαραγωγής χρησιμοποιεί τον runner,
+ώστε κάθε notebook να εκτελείται σε καθορισμένη σειρά και να ελέγχονται τα
+αναμενόμενα outputs, τα API-dependent αποτελέσματα και το provenance του run.
+
+Αναλυτικές, έτοιμες για αντιγραφή οδηγίες: [Canonical full run στο Kaggle](docs/KAGGLE_FULL_RUN.md).
+
+```bash
+python scripts/run_kaggle_pipeline.py --stage all --run-id publication-v1 --require-kaggle-dataset
+```
+
 
 ## Εκτέλεση Streamlit
 
@@ -87,20 +103,35 @@ streamlit run app.py
 
 Η εφαρμογή αναμένει τα παραγόμενα artifacts κάτω από `data/processed/`.
 
-## Κύρια Αποτελέσματα
+## Κύρια Αποτελέσματα — ιστορικό thesis run
 
-Στα τελικά evaluation artifacts, η παραλλαγή **Hybrid + Reranking** εμφανίζει την καλύτερη συνολική απόδοση:
+Τα παρακάτω νούμερα προέρχονται από το υπάρχον thesis run. Δεν αποτελούν ακόμη
+publication-run αποτελέσματα, επειδή το repository πλέον επιβάλλει πραγματικό
+reranking 20 hybrid candidates σε τελικό top-10. Πριν χρησιμοποιηθούν σε paper,
+πρέπει να αναπαραχθούν από νέο canonical Kaggle run και να αντικατασταθούν μαζί
+με τα αντίστοιχα figures.
 
-- Hit@1: 63.3%
-- Hit@5: 86.0%
-- MRR: 73.0%
+Στα τελικά evaluation artifacts, η παραλλαγή **Hybrid + Reranking** εμφανίζει την καλύτερη συνολική απόδοση.
+
+Μετρικές ανάκτησης σε επίπεδο αποσπάσματος (passage-level Evidence Hit@K, κατώφλι set-based token-overlap F1 ≥ 0.3 — όπως αναφέρονται στη διπλωματική):
+
+- Evidence Hit@1: 26.0%
+- Evidence Hit@5: 44.7%
+- MRR: 32.8%
+
+Μετρικές γένεσης (RAGChecker, claim-level):
+
 - RAGChecker F1: 27.0%
 - RAGChecker Faithfulness: 50.8%
 - RAGChecker Hallucination: 28.8%
 
+> Σημείωση: Η κάλυψη σε **επίπεδο εγγράφου** (document-level top-k match) είναι υψηλότερη
+> (περ. 63% στο top-1 και 86%–88% στο top-5/top-10), επειδή μετρά απλώς αν ανακτήθηκε
+> το σωστό έγγραφο, ανεξάρτητα από το αν εντοπίστηκε το σωστό απόσπασμα. Τα νούμερα
+> που αναφέρονται στη διπλωματική είναι τα αυστηρότερα passage-level παραπάνω.
+
 ## Σημειώσεις Αναπαραγωγής
 
-- Τα notebooks είναι καθαρισμένα από execution outputs ώστε το GitHub diff να παραμένει ευανάγνωστο.
-- Τα μεγάλα δεδομένα και embeddings δεν ανεβαίνουν στο repository.
-- Αν χρειάζεται πλήρης αναπαραγωγή από την αρχή, ξεκινήστε από το `01_setup_and_config.ipynb` και συνεχίστε σειριακά.
+- Για πλήρη αναπαραγωγή από την αρχή, χρησιμοποιήστε τον Kaggle runner από καθαρό clone.
 - Τα notebooks που χρησιμοποιούν OpenAI/RAGAS/RAGChecker απαιτούν `OPENAI_API_KEY` στο περιβάλλον.
+- Canonical runs αποτυγχάνουν αν η παραγωγή γίνει σε dry-run mode ή αν RAGAS/RAGChecker γράψουν placeholder metrics.
