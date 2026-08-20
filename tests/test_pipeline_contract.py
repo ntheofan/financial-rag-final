@@ -176,6 +176,15 @@ class PipelineContractTests(unittest.TestCase):
         self.assertIn("for source in RETRIEVAL_SOURCES_TO_GENERATE", source)
         self.assertIn("run_qa_generation_for_source", source)
 
+    def test_ragas_does_not_archive_its_output_directory_into_itself(self) -> None:
+        source = (NOTEBOOKS_DIR / "13_ragas_evaluation.ipynb").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertNotIn("shutil.make_archive", source)
+        self.assertNotIn('archive_base = EVAL_DIR / "ragas_results"', source)
+        self.assertIn("pipeline runner creates the final run bundle", source)
+
     def test_reranking_candidate_contract_is_explicit(self) -> None:
         contracts = self.config["contracts"]
         self.assertEqual(contracts["hybrid_candidates_per_query"], 20)
