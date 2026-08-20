@@ -55,7 +55,8 @@
   ],
   "contracts": {
     "hybrid_candidates_per_query": 20,
-    "reranked_results_per_query": 10
+    "reranked_results_per_query": 5,
+    "generation_contexts_per_query": 5
   },
   "required_outputs": {
     "bootstrap": [
@@ -71,6 +72,7 @@
       "data/processed/retrieval_results/retrieval_results_dense.csv",
       "data/processed/retrieval_results/retrieval_results_hybrid.csv",
       "data/processed/retrieval_results/retrieval_results_hybrid_reranked.csv",
+      "data/processed/retrieval_results/retrieval_candidates_hybrid_reranked.csv",
       "data/processed/retrieval_results/retrieval_manifest_hybrid_reranked.csv"
     ],
     "generation": [
@@ -83,7 +85,10 @@
     ],
     "evaluation": [
       "data/processed/evaluation/retrieval_evaluation_comparison.csv",
+      "data/processed/evaluation/retrieval_evaluation_per_query.csv",
       "data/processed/evaluation/qa_evaluation_comparison.csv",
+      "data/processed/evaluation/qa_evaluation_per_query.csv",
+      "data/processed/evaluation/qa_pairwise_comparison.csv",
       "data/processed/evaluation/ragas_results.csv",
       "data/processed/evaluation/ragchecker_results_dense.json",
       "data/processed/evaluation/ragchecker_results_hybrid.json",

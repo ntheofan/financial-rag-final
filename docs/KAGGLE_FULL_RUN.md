@@ -147,6 +147,21 @@ run θεωρείται έγκυρο μόνο όταν το `run_manifest.json` �
 !python scripts/run_kaggle_pipeline.py --stage evaluation --profile pilot --run-id pilot-evaluation-v1 --require-kaggle-dataset
 ```
 
+### Publication reranking contract
+
+Η τρέχουσα έκδοση χρησιμοποιεί το ακόλουθο ελεγχόμενο συμβόλαιο:
+
+- Hybrid candidate pool: 20 μοναδικά chunks ανά ερώτηση.
+- Metadata-aware cross-encoder input: `retrieved_doc_id`, `chunk_id`, `chunk_text`.
+- Τελικό score: fusion cross-encoder και Hybrid RRF (`0.7/0.3`).
+- Reranked output και generation context: 5 chunks ανά ερώτηση.
+- Audit output: `retrieval_candidates_hybrid_reranked.csv` με όλους τους 20
+  candidates, raw/fused ranks και ένδειξη `selected_for_generation`.
+
+Μετά από αλλαγή στο reranking πρέπει να εκτελεστούν ξανά, με αυτή τη σειρά,
+τα stages `retrieval`, `generation` και `evaluation`. Παλαιότερα generation ή
+evaluation artifacts δεν είναι συγκρίσιμα με το νέο retrieval output.
+
 Η τμηματική εκτέλεση προϋποθέτει ότι τα artifacts των προηγούμενων σταδίων
 βρίσκονται ήδη στις αναμενόμενες διαδρομές του ίδιου checkout. Το ίδιο
 `--profile`, `--sample-size` και `--sample-seed` πρέπει να χρησιμοποιούνται σε

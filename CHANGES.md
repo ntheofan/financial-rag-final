@@ -59,7 +59,7 @@
 - Τα notebooks 10, 13 και 14 δεν μπορούν πλέον να περάσουν canonical run με
   dry-run answers ή placeholder RAGAS/RAGChecker metrics.
 - Διορθώθηκε πειραματική ασυνέπεια: το hybrid retrieval αποθηκεύει 20 candidates,
-  το cross-encoder reranks και τους 20 και επιστρέφει τελικό top-10. Η αλλαγή
+  το cross-encoder reranks και τους 20 και επιστρέφει τελικό top-5. Η αλλαγή
   επηρεάζει τη λογική και απαιτεί νέο full run· τα παλιά figures/metrics είναι
   μόνο historical thesis snapshot.
 - Προστέθηκαν ελαφροί pipeline contract tests και GitHub Actions workflow.
@@ -77,3 +77,17 @@
   profile, sample size ή seed.
 - Τα pilot run manifests χαρακτηρίζονται ρητά ως μη κατάλληλα για publication
   metrics (`publication_eligible=false`).
+
+## 8. Finance-aware evaluation και metadata-aware reranking
+
+- Προστέθηκε κοινό `scripts/evaluation_metrics.py` για συνεπή αξιολόγηση σε όλα
+  τα downstream notebooks. Αναγνωρίζει ποσά με `K/M/B`, ποσοστά, basis points,
+  λογιστικά αρνητικά και μονάδες που δηλώνονται στην ερώτηση.
+- Το notebook 11 αποθηκεύει πλέον per-query retrieval και QA metrics, καθώς και
+  wide paired comparison table για τις τρεις παραλλαγές.
+- Ο reranker λαμβάνει `retrieved_doc_id` και `chunk_id` μαζί με το chunk text,
+  χωρίς να χρησιμοποιεί gold document/company fields.
+- Η τελική κατάταξη συνδυάζει normalized cross-encoder και Hybrid RRF scores.
+  Αποθηκεύεται επιπλέον audit αρχείο και για τους 20 βαθμολογημένους candidates.
+- Το τελικό reranked top-5 ευθυγραμμίζεται με τα πέντε contexts που δίνονται
+  στο answer-generation notebook.

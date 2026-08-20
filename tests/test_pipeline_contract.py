@@ -188,7 +188,8 @@ class PipelineContractTests(unittest.TestCase):
     def test_reranking_candidate_contract_is_explicit(self) -> None:
         contracts = self.config["contracts"]
         self.assertEqual(contracts["hybrid_candidates_per_query"], 20)
-        self.assertEqual(contracts["reranked_results_per_query"], 10)
+        self.assertEqual(contracts["reranked_results_per_query"], 5)
+        self.assertEqual(contracts["generation_contexts_per_query"], 5)
 
         hybrid_source = (
             NOTEBOOKS_DIR / "08_hybrid_retrieval.ipynb"
@@ -198,8 +199,39 @@ class PipelineContractTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertIn("TOP_K = 20", hybrid_source)
         self.assertIn("RERANK_TOP_N = 20", reranker_source)
-        self.assertIn("FINAL_TOP_K = 10", reranker_source)
+        self.assertIn("FINAL_TOP_K = 5", reranker_source)
         self.assertIn("validate_rerank_candidate_pool", reranker_source)
+        self.assertIn("build_reranker_document", reranker_source)
+        self.assertIn("fuse_rerank_scores", reranker_source)
+        self.assertIn("RERANK_SCORE_WEIGHT", reranker_source)
+        self.assertIn("HYBRID_SCORE_WEIGHT", reranker_source)
+
+        generation_source = (
+            NOTEBOOKS_DIR / "10_answer_generation.ipynb"
+        ).read_text(encoding="utf-8")
+        self.assertIn("TOP_K_CONTEXT = 5", generation_source)
+
+    def test_finance_aware_evaluation_contract_is_explicit(self) -> None:
+        evaluation_source = (
+            NOTEBOOKS_DIR / "11_evaluate_retrieval_and_qa.ipynb"
+        ).read_text(encoding="utf-8")
+        error_source = (
+            NOTEBOOKS_DIR / "12_error_analysis.ipynb"
+        ).read_text(encoding="utf-8")
+        figure_source = (
+            NOTEBOOKS_DIR / "15_thesis_figures_and_tables.ipynb"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("scripts.evaluation_metrics", evaluation_source)
+        self.assertIn("qa_evaluation_per_query.csv", evaluation_source)
+        self.assertIn("qa_pairwise_comparison.csv", evaluation_source)
+        self.assertIn("numeric_answer_accuracy", evaluation_source)
+        self.assertIn("evaluate_answer_record", error_source)
+        self.assertIn("qa_evaluation_per_query.csv", figure_source)
+        self.assertIn("finance_aware_score", figure_source)
+        self.assertNotIn("def lexical_f1", evaluation_source)
+        self.assertNotIn("def lexical_f1", error_source)
+        self.assertNotIn("def lexical_f1", figure_source)
 
     def test_kaggle_dataset_contract_is_explicit(self) -> None:
         dataset = self.config["kaggle_dataset"]

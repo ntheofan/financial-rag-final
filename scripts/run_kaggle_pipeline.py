@@ -481,7 +481,7 @@ def validate_retrieval_outputs(
     if "09_reranking.ipynb" in selected:
         import pandas as pd
 
-        expected = int(contracts.get("reranked_results_per_query", 10))
+        expected = int(contracts.get("reranked_results_per_query", 5))
         results_path = (
             REPO_ROOT
             / "data"
@@ -496,13 +496,39 @@ def validate_retrieval_outputs(
             / "retrieval_results"
             / "retrieval_manifest_hybrid_reranked.csv"
         )
-        frame = pd.read_csv(results_path, usecols=["financebench_id", "retrieved_rank"])
+        candidates_path = (
+            REPO_ROOT
+            / "data"
+            / "processed"
+            / "retrieval_results"
+            / "retrieval_candidates_hybrid_reranked.csv"
+        )
+        frame = pd.read_csv(
+            results_path,
+            usecols=[
+                "financebench_id",
+                "retrieved_rank",
+                "chunk_id",
+                "fused_score",
+                "pure_rerank_rank",
+            ],
+        )
         counts = frame.groupby("financebench_id").size()
         invalid = counts[counts != expected]
         if len(invalid):
             raise RuntimeError(
                 f"Reranked output contract failed for {len(invalid)} queries; "
                 f"expected exactly {expected} results per query"
+            )
+
+        rank_sequences = frame.groupby("financebench_id")["retrieved_rank"].apply(
+            lambda ranks: sorted(ranks.astype(int).tolist())
+        )
+        expected_ranks = list(range(1, expected + 1))
+        invalid_ranks = rank_sequences[rank_sequences.apply(lambda x: x != expected_ranks)]
+        if len(invalid_ranks):
+            raise RuntimeError(
+                f"Reranked rank sequence failed for {len(invalid_ranks)} queries"
             )
 
         manifest = pd.read_csv(manifest_path)
@@ -516,6 +542,45 @@ def validate_retrieval_outputs(
             raise RuntimeError(
                 f"Reranker received fewer than {expected_input} candidates for "
                 f"{len(undersized)} queries"
+            )
+
+        candidates = pd.read_csv(
+            candidates_path,
+            usecols=[
+                "financebench_id",
+                "chunk_id",
+                "fused_rank",
+                "pure_rerank_rank",
+                "rerank_score",
+                "rrf_score",
+                "selected_for_generation",
+                "rerank_input_text",
+            ],
+        )
+        candidate_counts = candidates.groupby("financebench_id").size()
+        invalid_candidates = candidate_counts[candidate_counts != expected_input]
+        if len(invalid_candidates):
+            raise RuntimeError(
+                f"Reranking audit contract failed for {len(invalid_candidates)} "
+                f"queries; expected {expected_input} scored candidates"
+            )
+
+        selected_flag = candidates["selected_for_generation"]
+        if selected_flag.dtype != bool:
+            selected_flag = selected_flag.astype(str).str.lower().eq("true")
+        selected = candidates[selected_flag]
+        selected_counts = selected.groupby("financebench_id").size()
+        invalid_selected = selected_counts[selected_counts != expected]
+        if len(invalid_selected):
+            raise RuntimeError(
+                f"Reranking selection contract failed for {len(invalid_selected)} queries"
+            )
+
+        result_keys = set(zip(frame["financebench_id"], frame["chunk_id"]))
+        selected_keys = set(zip(selected["financebench_id"], selected["chunk_id"]))
+        if result_keys != selected_keys:
+            raise RuntimeError(
+                "Reranked results do not match selected rows in the candidate audit"
             )
 
 

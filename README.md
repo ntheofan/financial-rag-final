@@ -27,7 +27,8 @@
 4. Embeddings με `BAAI/bge-m3` και FAISS `IndexFlatIP`
 5. Dense retrieval baseline
 6. Hybrid retrieval με BM25 και Reciprocal Rank Fusion (20 υποψήφιοι ανά query)
-7. Cross-encoder reranking με `BAAI/bge-reranker-v2-m3` (τελικό top-10)
+7. Metadata-aware cross-encoder reranking με `BAAI/bge-reranker-v2-m3`,
+   score fusion με το Hybrid RRF και τελικό context-aligned top-5
 8. RAG answer generation με OpenAI API
 9. Evaluation με retrieval metrics, deterministic QA metrics, RAGAS και RAGChecker
 10. Παραγωγή τελικών figures για τη διπλωματική
@@ -119,12 +120,16 @@ streamlit run app.py
 ## Κύρια Αποτελέσματα — ιστορικό thesis run
 
 Τα παρακάτω νούμερα προέρχονται από το υπάρχον thesis run. Δεν αποτελούν ακόμη
-publication-run αποτελέσματα, επειδή το repository πλέον επιβάλλει πραγματικό
-reranking 20 hybrid candidates σε τελικό top-10. Πριν χρησιμοποιηθούν σε paper,
+publication-run αποτελέσματα, επειδή το repository πλέον επιβάλλει metadata-aware
+reranking 20 Hybrid candidates σε τελικό top-5, ίδιο με το generation context.
+Πριν χρησιμοποιηθούν σε paper,
 πρέπει να αναπαραχθούν από νέο canonical Kaggle run και να αντικατασταθούν μαζί
 με τα αντίστοιχα figures.
 
-Στα τελικά evaluation artifacts, η παραλλαγή **Hybrid + Reranking** εμφανίζει την καλύτερη συνολική απόδοση.
+Τα historical artifacts δεν χρησιμοποιούνται για επιλογή νικητή. Το νέο
+evaluation αποθηκεύει per-query retrieval/QA αποτελέσματα και χρησιμοποιεί
+finance-aware αριθμητική αξιολόγηση για ποσά, μονάδες, ποσοστά και λογιστικά
+αρνητικά. Η τελική επιλογή pipeline θα γίνει μόνο μετά από νέο paired full run.
 
 Μετρικές ανάκτησης σε επίπεδο αποσπάσματος (passage-level Evidence Hit@K, κατώφλι set-based token-overlap F1 ≥ 0.3 — όπως αναφέρονται στη διπλωματική):
 
